@@ -1,0 +1,348 @@
+if [type] == "systemlogs" {
+    grok {
+        match => { "message" => "%{TIMESTAMP_ISO8601} (?:%{SYSLOGFACILITY} )?%{SYSLOGHOST} %{SYSLOGPROG}:" }
+        tag_on_failure=> [ "failure_grok_syslog_first" ]
+    }
+    if "dhcpd" in [program]  {
+        grok {
+            match => { "message" => "%{SYSLOGBASE2} (DHCPACK) (?:to|on) %{IP:dhcp_ip} (?:to )?\(?%{COMMONMAC:dhcp_mac}\)?" }
+            tag_on_failure => [ "failure_grok_syslog" ]
+            remove_tag => [ "failure_grok_syslog" ]
+        }
+    }
+    if "fail2ban" in [program]  {
+        grok {
+            match => [ "message", "%{SYSLOGBASE2} \S+ \S+ (?:fail2ban..+: )WARNING \[%{DATA:fail2ban_application}\] (?<fail2ban_action>Ban) %{IP:fail2ban_banned_host}" ]
+            tag_on_failure => [ "failure_grok_syslog" ]
+            remove_tag => [ "failure_grok_syslog" ]
+        }
+    }
+    if "fail2ban" in [program] and "failure_grok_syslog" in [tags] {
+        grok {
+            match => [ "message", "%{SYSLOGBASE2} \S+ \S+ (?:fail2ban..+: )WARNING \[%{DATA:fail2ban_application}\] (?<fail2ban_action>Unban) %{IP:fail2ban_unbanned_host}" ]
+            tag_on_failure => [ "failure_grok_syslog" ]
+            remove_tag => [ "failure_grok_syslog" ]
+        }
+    }
+    if "CRON" in [program]  {
+        grok {
+            match => { "message" => "%{SYSLOGBASE2} \(%{USER:user}\) (?:CMD)? \(\ *%{DATA:cron_action}\ *+\)" }
+            tag_on_failure => [ "failure_grok_syslog" ]
+            remove_tag => [ "failure_grok_syslog" ]
+        }
+    }
+    if "postgrey" in [program]  {
+        grok {
+            match => { "message" => "%{SYSLOGBASE2} ?.*action=%{WORD:postgrey_action}\, ?.*reason=%{DATA:postgrey_reason}\, ?.*delay=%{NUMBER:postgrey_delay}\, ?.*client_name=%{IPORHOST}\, ?.*client_address=%{IPORHOST:postgrey_clientaddr}\, ?.*sender=%{EMAILADDRESS:postgrey_sender}\," }
+            tag_on_failure => [ "failure_grok_syslog" ]
+            remove_tag => [ "failure_grok_syslog" ]
+        }
+    }
+    if "sshd" in [program]  {
+        grok {
+            match => { "message" => "%{SYSLOGBASE2} reverse mapping checking getaddrinfo for .*%{HOSTNAME:login_source_hostname} \[%{IP:login_source_ip}\] %{DATA:login_result} %{GREEDYDATA:sshd_warning}" }
+            tag_on_failure => [ "failure_grok_syslog" ]
+            remove_tag => [ "failure_grok_syslog" ]
+        }
+    }
+    if "sshd" in [program] and "failure_grok_syslog" in [tags] {
+        grok {
+            match => { "message" => "%{SYSLOGBASE2} %{NOTSPACE:auth_method}: *%{DATA:auth_status}; .*rhost=%{IPORHOST:login_source}.*user=%{WORD:user_login}" }
+            tag_on_failure => [ "failure_grok_syslog" ]
+            remove_tag => [ "failure_grok_syslog" ]
+        }
+    }
+    if "apache" in [program] {
+        grok {
+            match => { "message" => "%{SYSLOGBASE2} %{IPORHOST:apache_client_host} %{HTTPDUSER:ident} %{HTTPDUSER:auth} \[%{HTTPDATE:apache_access_timestamp}\] %{GREEDYDATA:apache_access_message}" }
+            tag_on_failure => [ "failure_grok_syslog" ]
+            remove_tag => [ "failure_grok_syslog" ]
+        }
+        geoip {
+            source => "apache_client_host"
+            cache_size => 1500
+            tag_on_failure => [ "failure_geoip_syslog" ]
+        } 
+    }
+    if [program] =~ /^postfix.*\/anvil$/ {  
+        grok { 
+            match => [ "message", "%{SYSLOGBASE2} statistics: max connection rate %{NUMBER:postfix_anvil_conn_rate}/%{:postfix_anvil_conn_period} for \(%{DATA:postfix_service}:%{IP:postfix_client_ip}\) at %{SYSLOGTIMESTAMP:postfix_anvil_timestamp}|statistics: max cache size %{NUMBER:postfix_anvil_cache_size} at %{SYSLOGTIMESTAMP:postfix_anvil_timestamp}|statistics: max connection count %{NUMBER:postfix_anvil_conn_count} for \(%{DATA:postfix_service}:%{IP:postfix_client_ip}\) at %{SYSLOGTIMESTAMP:postfix_anvil_timestamp}" ]
+            tag_on_failure => [ "failure_grok_syslog" ]
+            remove_tag => [ "failure_grok_syslog" ]
+        }
+    }
+    else if [program] =~ /^postfix.*\/bounce$/ {
+        grok {
+            match => [ "message", "%{SYSLOGBASE2} (?<postfix_queueid>[0-9A-F]{6,}|[0-9a-zA-Z]{12,}): sender (non-delivery|delivery status|delay) notification: (?<postfix_bounce_queueid>[0-9A-F]{6,}|[0-9a-zA-Z]{12,})" ]
+            tag_on_failure => [ "failure_grok_syslog" ]
+            remove_tag => [ "failure_grok_syslog" ]
+        }
+    }
+    else if [program] =~ /^postfix.*\/dnsblog$/ {
+        grok {
+            match => [ "message", "%{SYSLOGBASE2} addr %{IP:postfix_client_ip} listed by domain %{HOSTNAME:postfix_dnsbl_domain} as %{IP:postfix_dnsbl_result}|((?<postfix_queueid>[0-9A-F]{6,}|[0-9a-zA-Z]{12,}): )?(?<postfix_warning_level>warning|fatal|info)|(?<postfix_queueid>[0-9A-F]{6,}|[0-9a-zA-Z]{12,}): (?<postfix_keyvalue_data>[\w-]+=[^;]*)" ]
+            tag_on_failure => [ "failure_grok_syslog" ]
+            remove_tag => [ "failure_grok_syslog" ]
+        }
+    }
+    else if [program] =~ /^postfix.*\/error$/ {
+        grok {
+            match => [ "message", "%{SYSLOGBASE2} (?<postfix_queueid>[0-9A-F]{6,}|[0-9a-zA-Z]{12,}): (?<postfix_keyvalue_data>[\w-]+=[^;]*), status=(?<postfix_status>[\w-]*) \(%{GREEDYDATA:postfix_error_response}\)" ]
+            tag_on_failure => [ "failure_grok_syslog" ]
+            remove_tag => [ "failure_grok_syslog" ]
+        }
+    } else if [program] =~ /^postfix.*\/local$/ {
+        grok {
+            match => [ "message", "%{SYSLOGBASE2} (?<postfix_queueid>[0-9A-F]{6,}|[0-9a-zA-Z]{12,}): (?<postfix_keyvalue_data>[\w-]+=[^;]*)|((?<postfix_queueid>[0-9A-F]{6,}|[0-9a-zA-Z]{12,}): )?(?<postfix_warning_level>warning|fatal|info)|(?<postfix_queueid>[0-9A-F]{6,}|[0-9a-zA-Z]{12,}): (?<postfix_keyvalue_data>[\w-]+=[^;]*)" ]
+            tag_on_failure => [ "failure_grok_syslog" ]
+            remove_tag => [ "failure_grok_syslog" ]
+        }
+    } else if [program] =~ /^postfix.*\/master$/ {
+        grok {
+            match => [ "message", "%{SYSLOGBASE2} (daemon started|reload) -- version %{DATA:postfix_version}, configuration %{PATH:postfix_config_path}|terminating on signal %{INT:postfix_termination_signal}|((?<postfix_queueid>[0-9A-F]{6,}|[0-9a-zA-Z]{12,}): )?(?<postfix_warning_level>warning|fatal|info)|(?<postfix_queueid>[0-9A-F]{6,}|[0-9a-zA-Z]{12,}): (?<postfix_keyvalue_data>[\w-]+=[^;]*)" ]
+            tag_on_failure => [ "failure_grok_syslog" ]
+            remove_tag => [ "failure_grok_syslog" ]
+        }
+    } else if [program] =~ /^postfix.*\/pickup$/ {
+        grok {
+            match => [ "message", "%{SYSLOGBASE2} (?<postfix_queueid>[0-9A-F]{6,}|[0-9a-zA-Z]{12,}): (?<postfix_keyvalue_data>[\w-]+=[^;]*)" ]
+            tag_on_failure => [ "failure_grok_syslog" ]
+            remove_tag => [ "failure_grok_syslog" ]
+        }
+    } else if [program] =~ /^postfix.*\/pipe$/ {
+        grok {
+            match => [ "message", "%{SYSLOGBASE2} (?<postfix_queueid>[0-9A-F]{6,}|[0-9a-zA-Z]{12,}) (?<postfix_keyvalue_data>[\w-]+=[^;]*), status=(?<postfix_status>[\w-]*) \(%{GREEDYDATA:postfix_pipe_response}\)" ]
+            tag_on_failure => [ "failure_grok_syslog" ]
+            remove_tag => [ "failure_grok_syslog" ]
+        }
+    } else if [program] =~ /^postfix.*\/postdrop$/ {
+        grok {
+            match => [ "message", "%{SYSLOGBASE2} ((?<postfix_queueid>[0-9A-F]{6,}|[0-9a-zA-Z]{12,}): )?(?<postfix_warning_level>warning|fatal|info)|(?<postfix_queueid>[0-9A-F]{6,}|[0-9a-zA-Z]{12,}): (?<postfix_keyvalue_data>[\w-]+=[^;]*)" ]
+            tag_on_failure => [ "failure_grok_syslog" ]
+            remove_tag => [ "failure_grok_syslog" ]
+        }
+    }
+    else if [program] =~ /^postfix.*\/postscreen$/ {
+        grok {
+            match => [ "message", "%{SYSLOGBASE2} CONNECT from %{HOSTNAME:postfix_client_hostname}?\[%{IP:postfix_client_ip}\](:%{INT:postfix_client_port})? to \[%{IP:postfix_server_ip}\]:%{INT:postfix_server_port}|(?<postfix_postscreen_access>DISCONNECT|BLACKLISTED|WHITELISTED|WHITELIST VETO|PASS NEW|PASS OLD) %{HOSTNAME:postfix_client_hostname}?\[%{IP:postfix_client_ip}\](:%{INT:postfix_client_port})?|(?<postfix_action>accept|defer|discard|filter|header-redirect|reject): (?<postfix_smtp_stage>CONNECT|HELO|EHLO|STARTTLS|AUTH|MAIL( FROM)?|RCPT( TO)?|(end of )?DATA|RSET|UNKNOWN|END-OF-MESSAGE|VRFY|\.) from %{HOSTNAME:postfix_client_hostname}?\[%{IP:postfix_client_ip}\](:%{INT:postfix_client_port})?:( (?<postfix_status_code>\d{3}) (?<postfix_status_code_enhanced>\d\.\d\.\d))?( <%{DATA:postfix_status_data}>:)? (Service unavailable; .* \[%{GREEDYDATA:postfix_status_data}\] %{GREEDYDATA:postfix_status_message};|%{GREEDYDATA:postfix_status_message};) (?<postfix_keyvalue_data>[\w-]+=[^;]*)|NOQUEUE: reject: CONNECT from %{HOSTNAME:postfix_client_hostname}?\[%{IP:postfix_client_ip}\](:%{INT:postfix_client_port})?: %{GREEDYDATA:postfix_postscreen_toobusy_data}:|cache %{DATA} full cleanup: retained=%{NUMBER:postfix_postscreen_cache_retained} dropped=%{NUMBER:postfix_postscreen_cache_dropped} entries|(?<postfix_postscreen_violation>BARE NEWLINE|COMMAND TIME LIMIT|COMMAND COUNT LIMIT|COMMAND LENGTH LIMIT|COMMAND PIPELINING|DNSBL|HANGUP|NON-SMTP COMMAND|PREGREET)( %{INT})?( after %{NUMBER:postfix_postscreen_violation_time})? from %{HOSTNAME:postfix_client_hostname}?\[%{IP:postfix_client_ip}\](:%{INT:postfix_client_port})?(( after (?<postfix_smtp_stage>CONNECT|HELO|EHLO|STARTTLS|AUTH|MAIL( FROM)?|RCPT( TO)?|(end of )?DATA|RSET|UNKNOWN|END-OF-MESSAGE|VRFY|\.))?(: %{GREEDYDATA:postfix_postscreen_data})?| in tests (after|before) SMTP handshake)|((?<postfix_queueid>[0-9A-F]{6,}|[0-9a-zA-Z]{12,}): )?(?<postfix_warning_level>warning|fatal|info)|(?<postfix_queueid>[0-9A-F]{6,}|[0-9a-zA-Z]{12,}): (?<postfix_keyvalue_data>[\w-]+=[^;]*)" ]
+            tag_on_failure => [ "failure_grok_syslog" ]
+            remove_tag => [ "failure_grok_syslog" ]
+        }
+    }
+    else if [program] =~ /^postfix.*\/qmgr$/ {
+        grok {
+            match => [ "message", "%{SYSLOGBASE2} (?<postfix_queueid>[0-9A-F]{6,}|[0-9a-zA-Z]{12,}): removed|(?<postfix_queueid>[0-9A-F]{6,}|[0-9a-zA-Z]{12,}): (?<postfix_keyvalue_data>[\w-]+=[^;]*) \(queue active\)|(?<postfix_queueid>[0-9A-F]{6,}|[0-9a-zA-Z]{12,}): from=<%{DATA:postfix_from}>, status=(?<postfix_status)[\w-]*), returned to sender|((?<postfix_queueid>[0-9A-F]{6,}|[0-9a-zA-Z]{12,}): )?(?<postfix_warning_level>warning|fatal|info)|(?<postfix_queueid>[0-9A-F]{6,}|[0-9a-zA-Z]{12,}): (?<postfix_keyvalue_data>[\w-]+=[^;]*)" ]
+            tag_on_failure => [ "failure_grok_syslog" ]
+            remove_tag => [ "failure_grok_syslog" ]
+        }
+    } 
+    else if [program] =~ /^postfix.*\/scache$/ {
+        grok {
+            match => [ "message", "%{SYSLOGBASE2} statistics: (address|domain) lookup hits=%{INT:postfix_scache_hits} miss=%{INT:postfix_scache_miss} success=%{INT:postfix_scache_success}%|statistics: max simultaneous domains=%{INT:postfix_scache_domains} addresses=%{INT:postfix_scache_addresses} connection=%{INT:postfix_scache_connection}|statistics: start interval %{SYSLOGTIMESTAMP:postfix_scache_timestamp}" ]
+            tag_on_failure => [ "failure_grok_syslog" ]
+            remove_tag => [ "failure_grok_syslog" ]
+        }
+    }
+    else if [program] =~ /^postfix.*\/sendmail$/ {
+        grok {
+            match => [ "message", "%{SYSLOGBASE2} ((?<postfix_queueid>[0-9A-F]{6,}|[0-9a-zA-Z]{12,}): )?(?<postfix_warning_level>warning|fatal|info)|(?<postfix_queueid>[0-9A-F]{6,}|[0-9a-zA-Z]{12,}): (?<postfix_keyvalue_data>[\w-]+=[^;]*)" ]
+            tag_on_failure => [ "failure_grok_syslog" ]
+            remove_tag => [ "failure_grok_syslog" ]
+        }
+    }
+        else  if [program] =~ /^postfix.*\/.mtp$/ {
+        grok {
+            match => [ "message", "%{SYSLOGBASE2} (?<postfix_queueid>[0-9A-F]{6,}|[0-9a-zA-Z]{12,}): (?<postfix_keyvalue_data>[\w-]+=[^;]*) status=(?<postfix_status>[\w-]*)( \(%{GREEDYDATA:postfix_smtp_response}\))?|connect to %{HOSTNAME:postfix_relay_hostname}?\[(%{IP:postfix_relay_ip}|%{DATA:postfix_relay_service})\](:%{INT:postfix_relay_port})?|%{WORD:postfix_relay_service}: (?<postfix_smtp_lostconn_data>Connection timed out|No route to host|Connection refused|Network is unreachable|lost connection|timeout|SSL_accept error|-1)|SSL_connect error to %{HOSTNAME:postfix_relay_hostname}?\[(%{IP:postfix_relay_ip}|%{DATA:postfix_relay_service})\](:%{INT:postfix_relay_port})?|%{WORD:postfix_relay_service}: (?<postfix_smtp_lostconn_data>%{HOSTNAME:postfix_relay_hostname}?\[(%{IP:postfix_relay_ip}|%{DATA:postfix_relay_service})\](:%{INT:postfix_relay_port})?|%{WORD:postfix_relay_service})|(?<postfix_queueid>[0-9A-F]{6,}|[0-9a-zA-Z]{12,}): (?<postfix_smtp_lostconn_data>Connection timed out|No route to host|Connection refused|Network is unreachable|lost connection|timeout|SSL_accept error|-1) with %{HOSTNAME:postfix_relay_hostname}?\[(%{IP:postfix_relay_ip}|%{DATA:postfix_relay_service})\](:%{INT:postfix_relay_port})?|%{WORD:postfix_relay_service}( while (?<postfix_smtp_lostconn_reason>receiving the initial server greeting|sending message body|sending end of data -- message may be sent more than once))?|(?<postfix_queueid>[0-9A-F]{6,}|[0-9a-zA-Z]{12,}): conversation with %{HOSTNAME:postfix_relay_hostname}?\[(%{IP:postfix_relay_ip}|%{DATA:postfix_relay_service})\](:%{INT:postfix_relay_port})?|%{WORD:postfix_relay_service} timed out( while (?<postfix_smtp_lostconn_reason>receiving the initial server greeting|sending message body|sending end of data -- message may be sent more than once))?|(?<postfix_queueid>[0-9A-F]{6,}|[0-9a-zA-Z]{12,}): host %{HOSTNAME:postfix_relay_hostname}?\[(%{IP:postfix_relay_ip}|%{DATA:postfix_relay_service})\](:%{INT:postfix_relay_port})?|%{WORD:postfix_relay_service} said: %{GREEDYDATA:postfix_smtp_response} \(in reply to (?<postfix_smtp_stage>CONNECT|HELO|EHLO|STARTTLS|AUTH|MAIL( FROM)?|RCPT( TO)?|(end of )?DATA|RSET|UNKNOWN|END-OF-MESSAGE|VRFY|\.) command\)|(Anonymous|Trusted|Untrusted|Verified) TLS connection established (to %{HOSTNAME:postfix_relay_hostname}?\[(%{IP:postfix_relay_ip}|%{DATA:postfix_relay_service})\](:%{INT:postfix_relay_port})?|%{WORD:postfix_relay_service}|from POSTFIX_CLIENT_INFO %{HOSTNAME:postfix_client_hostname}?\[%{IP:postfix_client_ip}\](:%{INT:postfix_client_port})?): %{DATA:postfix_tls_version} with cipher %{DATA:postfix_tls_cipher} \(%{DATA:postfix_tls_cipher_size} bits\)|((?<postfix_queueid>[0-9A-F]{6,}|[0-9a-zA-Z]{12,}): )?(?<postfix_warning_level>warning|fatal|info)|(?<postfix_queueid>[0-9A-F]{6,}|[0-9a-zA-Z]{12,}): (?<postfix_keyvalue_data>[\w-]+=[^;]*)|host %{HOSTNAME:postfix_relay_hostname}?\[(%{IP:postfix_relay_ip}|%{DATA:postfix_relay_service})\](:%{INT:postfix_relay_port})?|%{WORD:postfix_relay_service} offers SMTPUTF8 support, but not 8BITMIME|certificate verification failed for %{HOSTNAME:postfix_relay_hostname}?\[(%{IP:postfix_relay_ip}|%{DATA:postfix_relay_service})\](:%{INT:postfix_relay_port})?|%{WORD:postfix_relay_service}: %{GREEDYDATA:postfix_tls_error}" ]
+            tag_on_failure => [ "failure_grok_syslog" ]
+            remove_tag => [ "failure_grok_syslog" ]
+        }
+    }
+    else if [program] =~ /^postfix.*\/smtpd$/ {
+        grok {
+            match => [ "message", "%{SYSLOGBASE2} connect from %{HOSTNAME:postfix_client_hostname}?\[%{IP:postfix_client_ip}\](:%{INT:postfix_client_port})?|disconnect from %{HOSTNAME:postfix_client_hostname}?\[%{IP:postfix_client_ip}\](:%{INT:postfix_client_port})?( %{GREEDYDATA:postfix_command_counter_data})?|(?<postfix_smtpd_lostconn_data>Connection timed out|No route to host|Connection refused|Network is unreachable|lost connection|timeout|SSL_accept error|-1)|(?<postfix_action>accept|defer|discard|filter|header-redirect|reject): (?<postfix_smtp_stage>CONNECT|HELO|EHLO|STARTTLS|AUTH|MAIL( FROM)?|RCPT( TO)?|(end of )?DATA|RSET|UNKNOWN|END-OF-MESSAGE|VRFY|\.) from %{HOSTNAME:postfix_client_hostname}?\[%{IP:postfix_client_ip}\](:%{INT:postfix_client_port})?:( (?<postfix_status_code>\d{3}) (?<postfix_status_code_enhanced>\d\.\d\.\d))?( <%{DATA:postfix_status_data}>:)? (Service unavailable; .* \[%{GREEDYDATA:postfix_status_data}\] %{GREEDYDATA:postfix_status_message};|%{GREEDYDATA:postfix_status_message};) (?<postfix_keyvalue_data>[\w-]+=[^;]*)|improper command pipelining after (?<postfix_smtp_stage>CONNECT|HELO|EHLO|STARTTLS|AUTH|MAIL( FROM)?|RCPT( TO)?|(end of )?DATA|RSET|UNKNOWN|END-OF-MESSAGE|VRFY|\.) from %{HOSTNAME:postfix_client_hostname}?\[%{IP:postfix_client_ip}\](:%{INT:postfix_client_port})?: %{GREEDYDATA:postfix_improper_pipelining_data}|(Anonymous|Trusted|Untrusted|Verified) TLS connection established (to %{HOSTNAME:postfix_relay_hostname}?\[(%{IP:postfix_relay_ip}|%{DATA:postfix_relay_service})\](:%{INT:postfix_relay_port})?|%{WORD:postfix_relay_service}|from %{HOSTNAME:postfix_client_hostname}?\[%{IP:postfix_client_ip}\](:%{INT:postfix_client_port})?): %{DATA:postfix_tls_version} with cipher %{DATA:postfix_tls_cipher} \(%{DATA:postfix_tls_cipher_size} bits\)|((?<postfix_queueid>[0-9A-F]{6,}|[0-9a-zA-Z]{12,}): )?(?<postfix_warning_level>warning|fatal|info)|(?<postfix_queueid>[0-9A-F]{6,}|[0-9a-zA-Z]{12,}): (?<postfix_keyvalue_data>[\w-]+=[^;]*)|proxy-(?<postfix_proxy_result>accept|defer|discard|filter|header-redirect|reject): (?<postfix_proxy_smtp_stage>CONNECT|HELO|EHLO|STARTTLS|AUTH|MAIL( FROM)?|RCPT( TO)?|(end of )?DATA|RSET|UNKNOWN|END-OF-MESSAGE|VRFY|\.): ((?<postfix_status_code>\d{3}) )?(?<postfix_status_code_enhanced>\d\.\d\.\d)?.*; (?<postfix_keyvalue_data>[\w-]+=[^;]*)|(?<postfix_queueid>[0-9A-F]{6,}|[0-9a-zA-Z]{12,}): (?<postfix_keyvalue_data>[\w-]+=[^;]*)" ]
+            tag_on_failure => [ "failure_grok_syslog" ]
+            remove_tag => [ "failure_grok_syslog" ]
+        }
+    }
+    else if [program] =~ /^postfix.*\/postsuper$/ {
+        grok {
+            match => [ "message", "%{SYSLOGBASE2} (?<postfix_queueid>[0-9A-F]{6,}|[0-9a-zA-Z]{12,}): (?<postfix_postsuper_action>removed|requeued|placed on hold|released from hold)|(?<postfix_postsuper_summary_action>removed|requeued|placed on hold|released from hold): %{NUMBER:postfix_postsuper_summary_count} messages?" ]
+            tag_on_failure => [ "failure_grok_syslog" ]
+            remove_tag => [ "failure_grok_syslog" ]
+        }
+    } else if [program] =~ /^postfix.*\/tlsmgr$/ {
+        grok {
+            match => [ "message", "%{SYSLOGBASE2} ((?<postfix_queueid>[0-9A-F]{6,}|[0-9a-zA-Z]{12,}): )?(?<postfix_warning_level>warning|fatal|info)|(?<postfix_queueid>[0-9A-F]{6,}|[0-9a-zA-Z]{12,}): (?<postfix_keyvalue_data>[\w-]+=[^;]*)" ]
+            tag_on_failure => [ "failure_grok_syslog" ]
+            remove_tag => [ "failure_grok_syslog" ]
+        }
+    } else if [program] =~ /^postfix.*\/tlsproxy$/ {
+        grok {
+            match => [ "message", "%{SYSLOGBASE2} (DIS)?CONNECT( from)? %{HOSTNAME:postfix_client_hostname}?\[%{IP:postfix_client_ip}\](:%{INT:postfix_client_port})?|((?<postfix_queueid>[0-9A-F]{6,}|[0-9a-zA-Z]{12,}): )?(?<postfix_warning_level>warning|fatal|info)|(?<postfix_queueid>[0-9A-F]{6,}|[0-9a-zA-Z]{12,}): (?<postfix_keyvalue_data>[\w-]+=[^;]*)" ]
+            tag_on_failure => [ "failure_grok_syslog" ]
+            remove_tag => [ "failure_grok_syslog" ]
+        }
+    } else if [program] =~ /^postfix.*\/trivial-rewrite$/ {
+        grok {
+            match => [ "message", "%{SYSLOGBASE2} ((?<postfix_queueid>[0-9A-F]{6,}|[0-9a-zA-Z]{12,}): )?(?<postfix_warning_level>warning|fatal|info)|(?<postfix_queueid>[0-9A-F]{6,}|[0-9a-zA-Z]{12,}): (?<postfix_keyvalue_data>[\w-]+=[^;]*)" ]
+            tag_on_failure => [ "failure_grok_syslog" ]
+            remove_tag => [ "failure_grok_syslog" ]
+        }
+    } else if [program] =~ /^postfix.*\/discard$/ {
+        grok {
+            match => [ "message", "%{SYSLOGBASE2} (?<postfix_queueid>[0-9A-F]{6,}|[0-9a-zA-Z]{12,}): (?<postfix_keyvalue_data>[\w-]+=[^;]*) status=(?<postfix_status>[\w-]*) %{GREEDYDATA}|((?<postfix_queueid>[0-9A-F]{6,}|[0-9a-zA-Z]{12,}): )?(?<postfix_warning_level>warning|fatal|info)|(?<postfix_queueid>[0-9A-F]{6,}|[0-9a-zA-Z]{12,}): (?<postfix_keyvalue_data>[\w-]+=[^;]*)" ]
+            tag_on_failure => [ "failure_grok_syslog" ]
+            remove_tag => [ "failure_grok_syslog" ]
+        }
+    } else if [program] =~ /^postfix.*\/virtual$/ {
+        grok {
+            match => [ "message", "%{SYSLOGBASE2} (?<postfix_queueid>[0-9A-F]{6,}|[0-9a-zA-Z]{12,}): (?<postfix_keyvalue_data>[\w-]+=[^;]*) status=(?<postfix_status>[\w-]*)( \(%{GREEDYDATA:postfix_smtp_response}\))?" ]
+            tag_on_failure => [ "failure_grok_syslog" ]
+            remove_tag => [ "failure_grok_syslog" ]
+        }
+    }
+    if [postfix_keyvalue_data] {
+        kv {
+            source       => "postfix_keyvalue_data"
+            trim_value   => "<>,"
+            prefix       => "postfix_"
+            remove_field => [ "postfix_keyvalue_data" ]
+        }
+        if [postfix_client] {
+            grok {
+                match => [ "postfix_client", "%{HOSTNAME:postfix_client_hostname}?\[%{IP:postfix_client_ip}\](:%{INT:postfix_client_port})?" ]
+                tag_on_failure => [ "_grok_kv_postfix_client_fail" ]
+                remove_field   => [ "postfix_client" ]
+            }
+        }
+        if [postfix_relay] {
+            grok {
+                match => [ "postfix_relay", "%{HOSTNAME:postfix_relay_hostname}?\[(%{IP:postfix_relay_ip}|%{DATA:postfix_relay_service})\](:%{INT:postfix_relay_port})?|%{WORD:postfix_relay_service}" ]
+                tag_on_failure => [ "_grok_kv_postfix_relay_fail" ]
+                remove_field   => [ "postfix_relay" ]
+            }
+        }
+        if [postfix_delays] {
+            grok {
+                match => [ "postfix_delays", "%{NUMBER:postfix_delay_before_qmgr}/%{NUMBER:postfix_delay_in_qmgr}/%{NUMBER:postfix_delay_conn_setup}/%{NUMBER:postfix_delay_transmission}" ]
+                tag_on_failure => [ "_grok_kv_postfix_delays_fail" ]
+                remove_field   => [ "postfix_delays" ]
+            }
+        }
+    }
+    if [postfix_command_counter_data] {
+        grok {
+            match => ["postfix_command_counter_data", "(helo=(%{INT:postfix_cmd_helo_accepted}/)?%{INT:postfix_cmd_helo} )?(ehlo=(%{INT:postfix_cmd_ehlo_accepted}/)?%{INT:postfix_cmd_ehlo} )?(starttls=(%{INT:postfix_cmd_starttls_accepted}/)?%{INT:postfix_cmd_starttls} )?(auth=(%{INT:postfix_cmd_auth_accepted}/)?%{INT:postfix_cmd_auth} )?(mail=(%{INT:postfix_cmd_mail_accepted}/)?%{INT:postfix_cmd_mail} )?(rcpt=(%{INT:postfix_cmd_rcpt_accepted}/)?%{INT:postfix_cmd_rcpt} )?(data=(%{INT:postfix_cmd_data_accepted}/)?%{INT:postfix_cmd_data} )?(rset=(%{INT:postfix_cmd_rset_accepted}/)?%{INT:postfix_cmd_rset} )?(quit=(%{INT:postfix_cmd_quit_accepted}/)?%{INT:postfix_cmd_quit} )?(unknown=(%{INT:postfix_cmd_unknown_accepted}/)?%{INT:postfix_cmd_unknown} )?commands=(%{INT:postfix_cmd_count_accepted}/)?%{INT:postfix_cmd_count}"]
+            tag_on_failure => ["failure_grok_syslog"]
+            remove_field   => ["postfix_command_counter_data"]
+        }
+    }
+    if "failure_grok_syslog_first" not in [tags] {
+        grok {
+            match => { "message" => "(?:%{SYSLOGTIMESTAMP}|%{TIMESTAMP_ISO8601}) (?:%<%{NONNEGINT}.%{NONNEGINT}> )?%{SYSLOGHOST:logsource}+(?: %{PROG:program}(?:\[%{POSINT:pid}\])?:|) %{GREEDYDATA:message}" }
+            overwrite => [ "message" ]
+            overwrite => [ "program" ]
+            overwrite => [ "pid" ]
+            overwrite => [ "logsource" ]
+            tag_on_failure => [ "failure_grok_syslog" ]
+            remove_tag => [ "failure_grok_syslog" ]
+        }
+    }
+    if "failure_grok_syslog_first" in [tags] {
+        grok {
+            match => { "message" => "%{TIMESTAMP_ISO8601:timestamp} %{SYSLOGHOST:logsource} (?<program>.+? .+?): %{GREEDYDATA:message}" }
+            overwrite => [ "message" ]
+            overwrite => [ "program" ]
+            overwrite => [ "logsource" ]
+            remove_tag => [ "failure_grok_syslog" ]
+            remove_tag => [ "failure_grok_syslog_first" ]
+            tag_on_failure => [ "failure_grok_syslog_FINAL" ]
+        }
+    }
+    date {
+        locale => "en"
+        match => [ "timestamp", "ISO8601", "YYYY-MM-dd HH:mm:ss", "MMM dd YYYY HH:mm:ss", "MMM dd HH:mm:ss", "YYYY-MM-dd HH:mm:ss.SSS", "MMM  d HH:mm:ss" ]
+        target => "@timestamp"
+        remove_field => "timestamp"
+    }
+    date {
+        locale => "en"
+        match => [ "timestamp8601", "ISO8601", "YYYY-MM-dd HH:mm:ss", "MMM dd YYYY HH:mm:ss", "MMM dd HH:mm:ss", "YYYY-MM-dd HH:mm:ss.SSS", "MMM  d HH:mm:ss" ]
+        target => "@timestamp"
+        remove_field => "timestamp8601"
+    }
+    date {
+        locale => "en"
+        match => [ "postfix_anvil_timestamp", "ISO8601", "YYYY-MM-dd HH:mm:ss", "MMM dd YYYY HH:mm:ss", "MMM dd HH:mm:ss", "YYYY-MM-dd HH:mm:ss.SSS", "MMM  d HH:mm:ss", "dd/MMM/yyyy:HH:mm:ss Z" ]
+        target => "postfix_anvil_timestamp"
+    }
+    date {
+        locale => "en"
+        match => [ "apache_access_timestamp", "ISO8601", "YYYY-MM-dd HH:mm:ss", "MMM dd YYYY HH:mm:ss", "MMM dd HH:mm:ss", "YYYY-MM-dd HH:mm:ss.SSS", "MMM  d HH:mm:ss", "dd/MMM/yyyy:HH:mm:ss Z" ]
+        target => "apache_access_timestamp"
+    }
+    mutate {
+        convert => [
+            "postfix_anvil_cache_size", "integer",
+            "postfix_anvil_conn_count", "integer",
+            "postfix_anvil_conn_rate", "integer",
+            "postfix_client_port", "integer",
+            "postfix_cmd_auth", "integer",
+            "postfix_cmd_auth_accepted", "integer",
+            "postfix_cmd_count", "integer",
+            "postfix_cmd_count_accepted", "integer",
+            "postfix_cmd_data", "integer",
+            "postfix_cmd_data_accepted", "integer",
+            "postfix_cmd_ehlo", "integer",
+            "postfix_cmd_ehlo_accepted", "integer",
+            "postfix_cmd_helo", "integer",
+            "postfix_cmd_helo_accepted", "integer",
+            "postfix_cmd_mail", "integer",
+            "postfix_cmd_mail_accepted", "integer",
+            "postfix_cmd_quit", "integer",
+            "postfix_cmd_quit_accepted", "integer",
+            "postfix_cmd_rcpt", "integer",
+            "postfix_cmd_rcpt_accepted", "integer",
+            "postfix_cmd_rset", "integer",
+            "postfix_cmd_rset_accepted", "integer",
+            "postfix_cmd_starttls", "integer",
+            "postfix_cmd_starttls_accepted", "integer",
+            "postfix_cmd_unknown", "integer",
+            "postfix_cmd_unknown_accepted", "integer",
+            "postfix_nrcpt", "integer",
+            "postfix_postscreen_cache_dropped", "integer",
+            "postfix_postscreen_cache_retained", "integer",
+            "postfix_postscreen_dnsbl_rank", "integer",
+            "postfix_relay_port", "integer",
+            "postfix_server_port", "integer",
+            "postfix_size", "integer",
+            "postfix_status_code", "integer",
+            "postfix_termination_signal", "integer",
+            "postfix_delay", "float",
+            "postfix_delay_before_qmgr", "float",
+            "postfix_delay_conn_setup", "float",
+            "postfix_delay_in_qmgr", "float",
+            "postfix_delay_transmission", "float",
+            "postfix_postscreen_violation_time", "float"
+        ]
+    }
+    if "beats_input_codec_plain_applied" in [tags] {
+        mutate { remove_tag => "beats_input_codec_plain_applied" }
+    }
+    if [beat] {
+        mutate { remove_field => "beat" }
+    }
+    if [host] { 
+        mutate { rename => [ "host", "logstash_source" ] } 
+    }
+    if [input_type] {
+        mutate { remove_field => "input_type" }
+    }
+    if [@version] {
+        mutate { remove_field => "@version" }
+    }
+    if [offset] {
+        mutate { remove_field => "offset" }
+    }
+}
+
